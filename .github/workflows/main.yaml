@@ -1,0 +1,78 @@
+# This workflow will do a clean install of node dependencies, build the source code and run tests across different versions of node
+# For more information see: https://help.github.com/actions/language-and-framework-guides/using-nodejs-with-github-actions
+
+name: Backend Builder and Deployer
+
+on:
+  push:
+    branches: [ main ]  
+
+jobs:
+  build:
+
+    runs-on: [self-hosted, builder]
+
+    env:
+      DOCKER_CONTENT_TRUST: 1
+      DOCKER_CONTENT_TRUST_SERVER: https://registry.edifly-dev.com
+
+    strategy:
+      matrix:
+        node-version: [18.x]
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        clean: false
+
+    - run: . ./generateKey.sh && set_env.sh
+      name: Generate new Auth Key
+
+    - run: . ./set_env.sh
+      name: Set Kubeconfig path
+
+    - run: npm install
+      name: Install dependencies
+      env:
+        NODE_OPTIONS: --max_old_space_size=4096
+        CI: false
+
+    - run: npm run build
+      name: Build source code
+      env:
+        NODE_OPTIONS: --max_old_space_size=4096
+        CI: false
+
+    - name: Docker Login
+      run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login registry.edifly-dev.com -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+      env:
+        DOCKER_BUILDKIT: 1
+        DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+        DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+
+    - run: docker buildx build -t registry.edifly-dev.com/esi-one-billing/all-new-aodb:$(git rev-parse --short HEAD) --platform linux/amd64,linux/arm64 . --push --build-arg GIT_COMMIT_MSG="$(git log -1 --pretty=%B)"
+      name: Build and Push Docker image linux/amd64,linux/arm64
+  
+  deploy-cluster-padalarang:
+    runs-on: [self-hosted, cluster-padalarang-deployer]
+    
+    needs: build
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+      with:
+        clean: false
+    - uses: ./.github/actions/deployer
+      name: Deploy to Kubernetes backend
+      with:
+        namespace: namespace
+        service-name: service-name
+        db-connection: ${{ secrets.DB_CONNECTION }}
+        self-station: ${{ secrets.SELF_STATION }} 
+        # bila ingin menambah env tambahan, bisa di tambah ke file actions deployer dan update template nya jgS
+        deployment-file: ./templates/deployment.yaml.template
+        image: registry.edifly-dev.com/project/image
+        cmd: start
+        instance: '1'
+        version: $(git rev-parse --short HEAD)

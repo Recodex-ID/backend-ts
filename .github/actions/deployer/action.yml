@@ -1,0 +1,82 @@
+
+name: "Deploy to Kubernetes"
+description: "Deploys the application to Kubernetes using kubectl."
+inputs:
+  kubeconfig:
+    description: "Path to the kubeconfig file."
+    default: "~/.kube/config"
+    # utk deploy ke multi cluster, simpan kubeconfig di file server deploy, dan ganti ke tiap master cluster nya
+    required: true
+  namespace:
+    description: "Kubernetes namespace to deploy to."
+    required: true
+  service-name:
+    default: "service-name"
+    description: "Kubernetes service name."
+    required: true
+  db-connection:
+    # utk penambahan env lain nya, sebaiknya di tambah di input ini dulu, lalu kemudian di bawah di lakukan peng generate an template
+    default: "mongodb://localhost:27017"
+    description: "Database connection string."
+    required: true
+  self-station:
+    default: "xxx"
+    description: "Self station."
+    required: true
+  deployment-file:
+    default: "./templates/deployment.yaml.template"
+    description: "Deployment file name."
+    required: false
+  image:
+    description: "Docker image name."
+    default: "registry.edifly-dev.com/project/image"
+    required: true
+  cmd:
+    # agar image di jalankan seperti ini, npm run command
+    description: "Command to run after deployment."
+    default: "start"
+    required: true
+  version:
+    description: "Version Package."
+    default: "0.0.0"
+    required: true
+  instance:
+    # jumlah replikasi
+    description: "Instance Count."
+    default: "1"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Get latest commit message
+      shell: bash
+      id: commit
+      run: |
+        COMMIT_MSG=$(git log -1 --pretty=%B | tr -d '\n' | cut -c1-240)
+        echo "COMMIT_MSG=$COMMIT_MSG" >> $GITHUB_ENV
+    - name: Make deployment.yaml
+      shell: bash
+      run: |
+        IMAGE=${{ inputs.image }}:$(git rev-parse --short HEAD)
+        echo "IMAGE=${IMAGE}"
+        sed -e "s|\${IMAGE}|${IMAGE}|g" \
+            -e "s|\${NAMESPACE}|${{ inputs.namespace }}|g" \
+            -e "s|\${SERVICE-NAME}|${{ inputs.service-name }}|g" \
+            -e "s|\${DB_CONNECTION}|${{ inputs.db-connection }}|g" \
+            -e "s|\${SELF_STATION}|${{ inputs.self-station }}|g" \
+            -e "s|\${COMMAND}|${{ inputs.cmd }}|g" \
+            -e "s|\${VERSION}|${{ inputs.version }}|g" \
+            -e "s|\${INSTANCE}|${{ inputs.instance }}|g" "${{ inputs.deployment-file }}" > deployment.yaml
+        cat deployment.yaml  # Display the file for verification
+
+    - name: Deploy to Kubernetes
+      shell: bash
+      run: |
+        kubectl --kubeconfig ${{ inputs.kubeconfig }} apply -f deployment.yaml
+        kubectl --kubeconfig ${{ inputs.kubeconfig }} rollout restart deployment ${{ inputs.service-name }} -n ${{ inputs.namespace }}
+        kubectl annotate deployment ${{ inputs.service-name }} \
+          git-commit-message="${{ env.COMMIT_MSG }}" \
+          -n ${{ inputs.namespace }} \
+          --overwrite
+
+      
