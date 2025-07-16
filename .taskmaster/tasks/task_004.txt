@@ -1,0 +1,11 @@
+# Task ID: 4
+# Title: Flight Operations Management
+# Status: pending
+# Dependencies: 2 (Not found), 3 (Not found)
+# Priority: high
+# Description: Core flight booking, planning, and execution system for private jet operations
+# Details:
+Multi-leg trip planning, real-time pricing, weather integration, flight plan generation, passenger manifests
+
+# Test Strategy:
+End-to-end booking flows, pricing accuracy, weather API integration, regulatory compliance testing

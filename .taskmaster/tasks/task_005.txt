@@ -1,0 +1,11 @@
+# Task ID: 5
+# Title: Crew Management System
+# Status: pending
+# Dependencies: 1 (Not found), 4 (Not found)
+# Priority: medium
+# Description: Crew scheduling, qualifications tracking, and duty time management
+# Details:
+Pilot/cabin crew scheduling, qualification tracking, duty time limits, currency monitoring, crew pairing optimization
+
+# Test Strategy:
+Scheduling algorithm testing, regulatory compliance verification, qualification expiry alerts testing

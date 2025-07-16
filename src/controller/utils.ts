@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextFunction, Request, Response, Router} from 'express';
 import m, { Model } from 'mongoose';
 import { createModel } from '../model/utils';
@@ -10,36 +8,139 @@ import { DecodeFunction } from '../library/base_signer';
 import { CreateRandomString, createLog } from '../library/utils';
 import { tUserIntf } from '../model/base_users';
 import captcha from '@bestdon/nodejs-captcha';
+import rateLimit from 'express-rate-limit';
+import { body, validationResult } from 'express-validator';
 
 export const AuthMiddleware = (decode: DecodeFunction) => (req: Request, res: Response, next: NextFunction) => {
 
     const authHeader:string = process.env.AUTHHEADER || 'srawung-token';
     const aToken = req.headers[authHeader] || req.query?.token || '';
-    // console.log(authHeader, aToken, req.headers);
+    
     if (!aToken) {
-        res.json({ error: 403, message: "Forbidden!" });
+        res.status(403).json({ error: 403, message: "Forbidden! Authentication token required." });
+        return;
     }
-    else {
-        const start = new Date().getTime();
-        res.set("before-token-timestamps", `${start}`);
+    
+    const start = new Date().getTime();
+    res.set("before-token-timestamps", `${start}`);
+    
+    try {
         const uData = decode(`${aToken}`);
         if (!uData) {
-            res.json({ error: 401, message: 'Auth Token Invalid or Expired!' });
+            res.status(401).json({ error: 401, message: 'Auth Token Invalid or Expired!' });
+            return;
         }
-        else {
-            res.locals.udata = { ...uData };
-            res.locals.token = aToken;
-            const end = new Date().getTime();
-            res.set("after-token-timestamps", `${end}`);
-            res.set('token-time-ms', `${end - start}`);
-            next();
-        }
+        
+        res.locals.udata = { ...uData };
+        res.locals.token = aToken;
+        const end = new Date().getTime();
+        res.set("after-token-timestamps", `${end}`);
+        res.set('token-time-ms', `${end - start}`);
+        next();
+    } catch (error) {
+        res.status(401).json({ error: 401, message: 'Auth Token Invalid or Expired!' });
+        return;
     }
 }
 
-export const RestApiMiddleware = (req: Request, res: Response, next:NextFunction) => {
+export const RestApiMiddleware = (_req: Request, _res: Response, next:NextFunction) => {
     next();
 }
+
+// Rate limiting for authentication endpoints
+export const createAuthRateLimiter = () => rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // limit each IP to 5 requests per windowMs for auth endpoints
+    message: {
+        error: 429,
+        message: 'Too many authentication attempts from this IP, please try again later.'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true, // Don't count successful requests
+});
+
+// Rate limiting for password-related endpoints
+export const createPasswordRateLimiter = () => rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 3, // limit each IP to 3 password change attempts per hour
+    message: {
+        error: 429,
+        message: 'Too many password change attempts from this IP, please try again later.'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+// Validation middleware for login
+export const validateLogin = [
+    body('username')
+        .isLength({ min: 3, max: 50 })
+        .withMessage('Username must be between 3 and 50 characters')
+        .matches(/^[a-zA-Z0-9_.-]+$/)
+        .withMessage('Username can only contain letters, numbers, dots, underscores, and hyphens'),
+    body('password')
+        .isLength({ min: 8 })
+        .withMessage('Password must be at least 8 characters long'),
+    body('captcha')
+        .isLength({ min: 6, max: 6 })
+        .withMessage('Captcha must be exactly 6 characters')
+        .matches(/^[0-9]+$/)
+        .withMessage('Captcha must contain only numbers'),
+    body('token')
+        .isLength({ min: 1 })
+        .withMessage('Captcha token is required'),
+    body('twoFactorToken')
+        .optional()
+        .isLength({ min: 6, max: 6 })
+        .withMessage('Two-factor token must be exactly 6 characters')
+        .matches(/^[0-9]+$/)
+        .withMessage('Two-factor token must contain only numbers'),
+];
+
+// Validation middleware for password change
+export const validatePasswordChange = [
+    body('current')
+        .isLength({ min: 8 })
+        .withMessage('Current password must be at least 8 characters long'),
+    body('password')
+        .isLength({ min: 8 })
+        .withMessage('New password must be at least 8 characters long')
+        .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/)
+        .withMessage('New password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'),
+];
+
+// Validation middleware for profile update
+export const validateProfileUpdate = [
+    body('name')
+        .optional()
+        .isLength({ min: 2, max: 100 })
+        .withMessage('Name must be between 2 and 100 characters')
+        .matches(/^[a-zA-Z\s]+$/)
+        .withMessage('Name can only contain letters and spaces'),
+    body('email')
+        .optional()
+        .isEmail()
+        .withMessage('Please provide a valid email address')
+        .normalizeEmail(),
+    body('phone')
+        .optional()
+        .matches(/^[+]?[0-9\s\-()]+$/)
+        .withMessage('Please provide a valid phone number'),
+];
+
+// Validation result checker
+export const checkValidationResult = (req: Request, res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({
+            error: 400,
+            message: 'Validation failed',
+            details: errors.array()
+        });
+    }
+    next();
+};
 
 type tCallbackHandler=(body:any)=>any;
 
@@ -53,20 +154,61 @@ export const CtrlHandler = async (req: Request, res: Response, callback: tCallba
     }
     const start = new Date().getTime();
     res.set("before-exec-timestamps", `${start}`);
+    
     try {
         jres.data = await callback(req.body)
     } catch (error) {
+        // Log the full error for debugging purposes
+        console.error('Controller Error:', {
+            message: error.message,
+            stack: error.stack,
+            url: req.url,
+            method: req.method,
+            ip: req.ip,
+            userAgent: req.get('user-agent'),
+            timestamp: new Date().toISOString()
+        });
+
         if (!httpErrorCode) {
             jres.error = 500;
-            jres.message = error.message;
-            // jres.stack = error.stack;
-            jres.errorName = error.name;
-            // console.error(error);
-        }
-        else {
-            res.status(500).send(error.message);
+            
+            // Don't expose sensitive error details in production
+            if (process.env.NODE_ENV === 'production') {
+                // Only expose safe error messages
+                const safeMessages = [
+                    'User',
+                    'Not Found',
+                    'Wrong Password',
+                    'Disabled',
+                    'Invalid',
+                    'Expired',
+                    'Token',
+                    'Two-factor',
+                    'required',
+                    'Validation',
+                    'failed',
+                    'locked',
+                    'Captcha',
+                    'Privileges',
+                    'permission'
+                ];
+                
+                const isSafeMessage = safeMessages.some(safe => error.message.includes(safe));
+                jres.message = isSafeMessage ? error.message : 'An error occurred processing your request';
+            } else {
+                jres.message = error.message;
+                jres.errorName = error.name;
+            }
+        } else {
+            const statusCode = error.statusCode || 500;
+            const message = process.env.NODE_ENV === 'production' 
+                ? 'An error occurred processing your request' 
+                : error.message;
+            res.status(statusCode).json({ error: statusCode, message });
+            return;
         }
     }
+    
     if (jres.data !== undefined) {
         const end = new Date().getTime();
         res.set("after-exec-timestamps", `${end}`);
@@ -74,13 +216,13 @@ export const CtrlHandler = async (req: Request, res: Response, callback: tCallba
         res.json(jres);
     }
 }
-type tBeforeSaveData=(data:object, level:number, uid:string, req:Request) => Promise<object>;
-type tBeforeRead=(search:string, search2:string, filter:object)=>Promise<object>;
-type tAfterSave=(data:object)=>Promise<object>;
-type tBeforeInq=(data:object, userData?:object)=>Promise<object>;
-type tBeforeDetailResp=(data:object, isMultiple:boolean, uid:string)=>Promise<object>;
-type tAddAuthQry=(udata:object)=>Promise<object>;
-type tAfterInq=(inqData:object)=>Promise<object>;
+type tBeforeSaveData=(_data:object, _level:number, _uid:string, _req:Request) => Promise<object>;
+type tBeforeRead=(_search:string, _search2:string, _filter:object)=>Promise<object>;
+type tAfterSave=(_data:object)=>Promise<object>;
+type tBeforeInq=(_data:object, _userData?:object)=>Promise<object>;
+type tBeforeDetailResp=(_data:object, _isMultiple:boolean, _uid:string)=>Promise<object>;
+type tAddAuthQry=(_udata:object)=>Promise<object>;
+type tAfterInq=(_inqData:object)=>Promise<object>;
 
 export interface tCrudFunctionCallback{
     beforeSaveData?:tBeforeSaveData
@@ -305,24 +447,28 @@ export const createReportCtrl = (schema: Model<any>, type:string = 'daily', colu
 type refreshTokenFunc=(aToken: string)=>string;
 
 export const createAuthController = (model: tUserIntf, decoder: DecodeFunction, refreshToken: refreshTokenFunc, CaptchaCache: any) => {
-    const { changePassword, createDefaultUser, Login, updateProfile, updateLastLogin } = model;
+    const { changePassword, createDefaultUser, Login, updateProfile, updateLastLogin, setupTwoFactor, verifyTwoFactor, disableTwoFactor, createAviationUser } = model;
     // const CaptchaCache = {};
     const rtr = Router();
 
-    rtr.post('/login', (req, res) => {
+    // Rate limiters
+    const authLimiter = createAuthRateLimiter();
+    const passwordLimiter = createPasswordRateLimiter();
+
+    rtr.post('/login', authLimiter, validateLogin, checkValidationResult, (req, res) => {
         CtrlHandler(req, res, async (body) => {
-            const { username, password, token, captcha } = body;
+            const { username, password, token, captcha, twoFactorToken } = body;
             if (!CaptchaCache[`${token}`]) throw new Error("Captcha expired!");
             const { timer, value } = CaptchaCache[`${token}`];
             if (value !== captcha) throw new Error('Captcha Invalid');
             clearTimeout(timer);
             delete CaptchaCache[`${token}`];
             try {
-                const [token, udata] = await Login(username, password);
+                const [authToken, udata] = await Login(username, password, twoFactorToken);
 
                 await updateLastLogin(udata)
                 createLog(udata._id, `Login Success For User ${username}`, req);
-                return token;
+                return authToken;
             } catch (error) {
                 createLog(undefined, `Login Failed For User ${username}`, req);
                 throw error;
@@ -335,6 +481,10 @@ export const createAuthController = (model: tUserIntf, decoder: DecodeFunction, 
     rtr.use('/profile', AuthMiddleware(decoder));
     rtr.use('/changePassword', AuthMiddleware(decoder));
     rtr.use('/me', AuthMiddleware(decoder));
+    rtr.use('/setup-2fa', AuthMiddleware(decoder));
+    rtr.use('/verify-2fa', AuthMiddleware(decoder));
+    rtr.use('/disable-2fa', AuthMiddleware(decoder));
+    rtr.use('/create-aviation-user', AuthMiddleware(decoder));
 
     rtr.get('/captcha/:uid', (req, res) => {
         CtrlHandler(req, res, async () => {
@@ -379,7 +529,7 @@ export const createAuthController = (model: tUserIntf, decoder: DecodeFunction, 
     });
 
 
-    rtr.post('/profile', (req, res) => {
+    rtr.post('/profile', validateProfileUpdate, checkValidationResult, (req, res) => {
         CtrlHandler(req, res, async (body) => {
             // console.log(body);
             const { _id, username } = res.locals.udata;
@@ -388,13 +538,62 @@ export const createAuthController = (model: tUserIntf, decoder: DecodeFunction, 
         });
     });
 
-    rtr.post('/changePassword', (req, res) => {
+    rtr.post('/changePassword', passwordLimiter, validatePasswordChange, checkValidationResult, (req, res) => {
         CtrlHandler(req, res, async (body) => {
             const { username, _id } = res.locals.udata;
             const { password, current } = body;
             await changePassword(username, current, password);
             createLog(_id, `Change password for ${username}`, req);
-            return password;
+            return { message: 'Password changed successfully' };
+        });
+    });
+
+    rtr.post('/setup-2fa', (req, res) => {
+        CtrlHandler(req, res, async (body) => {
+            const { _id: userId, username } = res.locals.udata;
+            const result = await setupTwoFactor(userId);
+            createLog(userId, `Setup 2FA for ${username}`, req);
+            return result;
+        });
+    });
+
+    rtr.post('/verify-2fa', (req, res) => {
+        CtrlHandler(req, res, async (body) => {
+            const { _id: userId, username } = res.locals.udata;
+            const { token } = body;
+            const verified = await verifyTwoFactor(userId, token);
+            if (verified) {
+                createLog(userId, `2FA enabled for ${username}`, req);
+            } else {
+                createLog(userId, `Failed 2FA verification for ${username}`, req);
+            }
+            return { verified };
+        });
+    });
+
+    rtr.post('/disable-2fa', (req, res) => {
+        CtrlHandler(req, res, async (body) => {
+            const { _id: userId, username } = res.locals.udata;
+            const { password } = body;
+            const disabled = await disableTwoFactor(userId, password);
+            createLog(userId, `2FA disabled for ${username}`, req);
+            return { disabled };
+        });
+    });
+
+    rtr.post('/create-aviation-user', (req, res) => {
+        CtrlHandler(req, res, async (body) => {
+            const { _id: createdBy, username: creatorUsername, level } = res.locals.udata;
+            const { role, ...userData } = body;
+            
+            // Check if user has permission to create users (super admin or operations manager)
+            if (!(level & 0x4000)) {
+                throw new Error('Insufficient permissions to create users');
+            }
+            
+            const newUser = await createAviationUser(userData, role, createdBy);
+            createLog(createdBy, `Created aviation user ${userData.username} with role ${role} by ${creatorUsername}`, req);
+            return newUser;
         });
     });
 

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import m, { Model } from 'mongoose';
 
 export const reqPaging = async (schema: Model<any>, page: number, perPage: number, filter:object = {}, sort:object = { _id: -1 }, projection:string = '') => {

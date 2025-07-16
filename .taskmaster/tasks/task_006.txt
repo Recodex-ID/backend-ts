@@ -1,0 +1,11 @@
+# Task ID: 6
+# Title: Maintenance Management System
+# Status: pending
+# Dependencies: 3 (Not found)
+# Priority: medium
+# Description: Aircraft maintenance scheduling, tracking, and compliance monitoring
+# Details:
+Scheduled/unscheduled maintenance, parts inventory, service providers, airworthiness directive compliance
+
+# Test Strategy:
+Maintenance schedule accuracy, compliance alerts, inventory tracking, cost analysis validation

@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable @typescript-eslint/no-unused-vars */
 import jwt from 'jsonwebtoken';
 // import fs from 'fs';
 
@@ -18,15 +16,60 @@ export default (privateKey, publicKey, signerOptions) => {
 
     const decode:DecodeFunction =(aToken)=>{
         try {
-            return verifyToken(aToken) && jwt.decode(aToken, {complete:false});       
+            // First verify the token signature and validity
+            const verified = verifyToken(aToken);
+            if (!verified) {
+                return false;
+            }
+            
+            // Then decode the payload
+            const decoded = jwt.decode(aToken, {complete:false});
+            
+            // Additional security checks
+            if (!decoded || typeof decoded !== 'object') {
+                return false;
+            }
+            
+            // Check if token has been blacklisted or has invalid claims
+            const now = Math.floor(Date.now() / 1000);
+            if (decoded.exp && decoded.exp < now) {
+                return false;
+            }
+            
+            return decoded;
         } catch (error) {
+            console.error('Token decode error:', error.message);
             return false;
         }
     }
 
     const refreshToken=(aToken)=>{
-        const {aud, exp, iat, sub, ...uData}=decode(aToken);
-        return uData && signer(uData);
+        try {
+            const decoded = decode(aToken);
+            if (!decoded) {
+                return false;
+            }
+            
+            // Check if token is close to expiry (within 1 hour)
+            const now = Math.floor(Date.now() / 1000);
+            const timeUntilExpiry = decoded.exp - now;
+            if (timeUntilExpiry > 3600) { // 1 hour in seconds
+                return false; // Token is not close to expiry, no need to refresh
+            }
+            
+            // Remove JWT standard claims and regenerate
+            const {aud, exp, iat, sub, ...uData} = decoded;
+            
+            // Validate essential user data exists
+            if (!uData._id || !uData.username) {
+                return false;
+            }
+            
+            return signer(uData);
+        } catch (error) {
+            console.error('Token refresh error:', error.message);
+            return false;
+        }
     }
 
     return { verifyToken, signer, decode, refreshToken }
