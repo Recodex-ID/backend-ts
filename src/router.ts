@@ -1,6 +1,7 @@
 import {Router} from 'express';
 import moment from 'moment';
-import AuthCtrl from './controller/auth';    
+import AuthCtrl from './controller/auth';
+import ClientCtrl from './controller/client';
 const rtr=Router();
 
 rtr.get('/', (req, res)=>{
@@ -8,5 +9,6 @@ rtr.get('/', (req, res)=>{
 })
 
 rtr.use('/auth', AuthCtrl);
+rtr.use('/clients', ClientCtrl);
 
 export default rtr;
